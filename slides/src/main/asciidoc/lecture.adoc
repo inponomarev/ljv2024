@@ -1,0 +1,5261 @@
+= Inside Out Java: Exploring Data Structures with JOL Visualization
+Ivan Ponomarev
+:revealjs_theme: black
+:revealjs_customtheme: white_course.css
+:revealjs_slideNumber: true
+:revealjs_history:
+:revealjs_progress:
+:encoding: UTF-8
+:lang: ru
+include::_doc_general_attributes.adoc[]
+:doctype: article
+:toclevels: 3
+:imagesdir: images
+:source-highlighter: highlightjs
+:highlightjsdir: highlight
+:icons: font
+:iconfont-remote!:
+:iconfont-name: font-awesome-4.7.0/css/font-awesome
+:revealjs_mouseWheel: true
+:revealjs_center: false
+:revealjs_transition: none
+:revealjs_width: 1600
+:revealjs_height: 900
+:stem: latexmath
+:sectnums!:
+:!figure-caption:
+
+[%notitle]
+== Who I Am
+
+[cols="20a,80a"]
+|===
+|image::ivan.jpg[]
+|
+Ivan Ponomarev
+
+* Staff Software Engineer @ Synthesized
+* Lecturer @ Northeastern University London
+|===
+
+== What does it take to make a lecture course?
+
+* Prepare a 1.5-hour lecture every week for 14 consecutive weeks
+* Don't feel like drawing on the board
+* Want to make slides as code (https://ponomarev.uk/blog/presentation.html)
+* *Is it possible for the slides to draw themselves?*
+
+== GraphViz (Graph Visualization Software)
+
+* Initial release: before 1991 -- more than 33 years old
+* Latest release: 12.1.2, September 2024 -- still very actively developed
+* DOT language & visualization software
+
+== GraphViz (Graph Visualization Software)
+
+[cols=">.^50a,<.^50a"]
+|===
+|
+[source]
+--
+        digraph G{
+          A->B->C;
+          B->D->A;
+          C->A;
+        }
+--
+
+[.fragment]
+[source]
+--
+dot -Tpng myfile.dot > myfile.png
+--
+|
+
+[.fragment]
+[graphviz]
+--
+digraph G{
+  graph [ dpi = 180 ];
+  A->B->C;
+  B->D->A;
+  C->A;
+}
+--
+|===
+
+
+== Lightweight Java Visualizer History: 2004
+
+* *John Hamer* https://www.cs.auckland.ac.nz/~j-hamer/ACE04-paper.pdf[“Visualising Java Data Structures as Graphs”] (ACE 2004)
+* https://www.cs.auckland.ac.nz/~j-hamer/LJV.html
+* GNU GPL, file `LJV.java`.
+* Java Reflection API + GraphViz.
+
+== Lightweight Java Visualizer reborn: 2020
+
+* Nuras Nogaev, Ilya Selivanov (MIPT)
+* Improved API
+* Updated GraphViz
+* GitHub, Maven release, CI, tests
+* 280+ stars on GitHub
+
+== Java 9+: Reflection is no longer available everywhere for free
+
+[source]
+--
+java.lang.reflect.InaccessibleObjectException: 
+Unable to make field [...] accessible: 
+module java.base does not "opens java.lang" to unnamed module
+--
+
+* We now need to add `--add-opens` directives in order to introspect classes from the standard library.
+* Also, `getDeclaredFields()` does not gurantee the ordering of the fields across invocations, so we had to look for something more powerful than Reflection API.
+
+
+== OpenJDK/JOL
+
+* _JOL (Java Object Layout) is the tiny toolbox to analyze object layout schemes in JVMs. These tools are using Unsafe, JVMTI, and Serviceability Agent (SA) heavily to decoder the actual object layout, footprint, and references. This makes JOL much more accurate than other tools._
+* JOL is *very* low-level, it hacks into the structure of Java objects and reveals their structure bitwise in memory.
+* As it's a part of OpenJDK, we can rely on its support in the future.
+
+== Example JOL output
+
+[source]
+--
+java -jar jol-cli.jar internals java.util.HashMap
+# VM mode: 64 bits
+# Compressed references (oops): 3-bit shift
+# Compressed class pointers: 0-bit shift and 0x1B6C5000000 base
+# Object alignment: 8 bytes
+
+[...]
+
+Instantiated the sample instance via default constructor.
+--
+
+== Example JOL output
+[source]
+--
+java.util.HashMap object internals:
+OFF SZ                     TYPE DESCRIPTION            VALUE
+  0  8                          (object header: mark)  0x0000000000000001
+                                                       (non-biasable; age: 0)
+  8  4                          (object header: class) 0x0008ccb8
+ 12  4            java.util.Set AbstractMap.keySet     null
+ 16  4     java.util.Collection AbstractMap.values     null
+ 20  4                      int HashMap.size           0
+ 24  4                      int HashMap.modCount       0
+ 28  4                      int HashMap.threshold      0
+ 32  4                    float HashMap.loadFactor     0.75
+ 36  4 java.util.HashMap.Node[] HashMap.table          null
+ 40  4            java.util.Set HashMap.entrySet       null
+ 44  4                          (object alignment gap)
+Instance size: 48 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+--
+
+== What can we learn from JOL?
+
+* https://shipilev.net/jvm/objects-inside-out/
+
+== 2024: LJV is now part of JOL
+
+[source,xml]
+--
+    <dependency>
+      <groupId>org.openjdk.jol</groupId>
+      <artifactId>jol-core</artifactId>
+      <version>0.18-SNAPSHOT</version>
+    </dependency>
+--
+
+
+== Step 1: Creating and Configuring LJV
+
+[source,java]
+--
+import org.openjdk.jol.ljv.LJV;
+
+LJV ljv = new LJV()
+    .setQualifyNestedClassNames(true)
+    .setIgnoreNullValuedFields(true)
+    .addFieldAttribute("sourceSpliterator", "constraint=false");
+--
+
+== Step 2: Creating the object to be visualized
+
+[source,java]
+--
+Stream<Integer> o = 
+    List.of(1, 2, 3)
+    .stream()
+    .map(x -> x * x)
+    .filter(x -> x % 2 == 0);
+--
+
+== Step 3: Visualize
+[source,java]
+--
+//DOT script
+String dot = ljv.drawGraph(o);
+
+//use GraphViz online
+String encoded = URLEncoder.encode(dot, "UTF8")
+                .replaceAll("\\+", "%20");
+Desktop.getDesktop().browse(
+    new URI("https://dreampuf.github.io/GraphvizOnline/#"
+                        + encoded));
+
+--
+
+
+== Step 4: Examine the Results
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 150 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='7'>ReferencePipeline$2</td>
+			</tr>
+			<tr>
+				<td>sourceAnyStateful: false</td>
+			</tr>
+			<tr>
+				<td>depth: 2</td>
+			</tr>
+			<tr>
+				<td>parallel: false</td>
+			</tr>
+			<tr>
+				<td>sourceOrOpFlags: 128</td>
+			</tr>
+			<tr>
+				<td>combinedFlags: 154</td>
+			</tr>
+			<tr>
+				<td>linkedOrConsumed: false</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='7'>ReferencePipeline$3</td>
+			</tr>
+			<tr>
+				<td>sourceAnyStateful: false</td>
+			</tr>
+			<tr>
+				<td>depth: 1</td>
+			</tr>
+			<tr>
+				<td>parallel: false</td>
+			</tr>
+			<tr>
+				<td>sourceOrOpFlags: 10</td>
+			</tr>
+			<tr>
+				<td>combinedFlags: 90</td>
+			</tr>
+			<tr>
+				<td>linkedOrConsumed: true</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Main$$Lambda$14/0x0000000800066040</td>
+			</tr>
+		</table>
+	>];
+	n2 -> n3[label="val$mapper",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='7'>ReferencePipeline$Head</td>
+			</tr>
+			<tr>
+				<td>combinedFlags: 95</td>
+			</tr>
+			<tr>
+				<td>sourceAnyStateful: false</td>
+			</tr>
+			<tr>
+				<td>linkedOrConsumed: true</td>
+			</tr>
+			<tr>
+				<td>depth: 0</td>
+			</tr>
+			<tr>
+				<td>parallel: false</td>
+			</tr>
+			<tr>
+				<td>sourceOrOpFlags: 80</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n4[label="sourceStage",fontsize=12];
+	n4 -> n2[label="nextStage",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>AbstractList$RandomAccessSpliterator</td>
+			</tr>
+			<tr>
+				<td>index: 0</td>
+			</tr>
+			<tr>
+				<td>expectedModCount: 0</td>
+			</tr>
+			<tr>
+				<td>fence: -1</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>ImmutableCollections$ListN</td>
+			</tr>
+		</table>
+	>];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+			</tr>
+		</table>
+	>];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>];
+	n7:f0 -> n8[label="0",fontsize=12];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>];
+	n7:f1 -> n9[label="1",fontsize=12];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>];
+	n7:f2 -> n10[label="2",fontsize=12];
+	n6 -> n7[label="elements",fontsize=12];
+	n5 -> n6[label="list",fontsize=12];
+	n4 -> n5[label="sourceSpliterator",fontsize=12,constraint=false];
+	n2 -> n4[label="this$0",fontsize=12];
+	n2 -> n4[label="previousStage",fontsize=12];
+	n2 -> n4[label="sourceStage",fontsize=12];
+	n2 -> n1[label="nextStage",fontsize=12];
+	n1 -> n2[label="this$0",fontsize=12];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Main$$Lambda$15/0x0000000800066440</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n11[label="val$predicate",fontsize=12];
+	n1 -> n2[label="previousStage",fontsize=12];
+	n1 -> n4[label="sourceStage",fontsize=12];
+}
+
+--
+
+== Our Plan
+
+* *Strings and Primitive Wrappers*
+* Queues
+* `Map` and `ConcurrentMap`
+* `NavigableMap` and `ConcurrentNavigableMap`
+
+== String
+
+[source,java]
+--
+ new LJV().drawGraph("Hello");
+--
+
+== Evolution of String
+
+[cols="^25a,^25a,^25a,^25a"]
+|===
+|Java 6–
+|Java 7+
+|Java 9+
+|Java 13+
+|
+
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 120 ];
+n2099335910[label="String\|{offset: 0\|count: 5\|hash: 0}",shape=record];
+n2099335910 -> n765884855[label="value",fontsize=12];
+n765884855[shape=record, label="H\|e\|l\|l\|o"];
+}
+--
+
+|
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 120 ];
+n460141958[label="String\|{hash: 0}",shape=record];
+n460141958 -> n1735600054[label="value",fontsize=12];
+n1735600054[shape=record, label="H\|e\|l\|l\|o"];
+}
+--
+|
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 120 ];
+n557041912[label="String\|{coder: 0\|hash: 0}",shape=record];
+n557041912 -> n1531333864[label="value",fontsize=12];
+n1531333864[shape=record, label="72\|101\|108\|108\|111"];
+}
+--
+
+|
+
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 120 ];
+n2129789493[label="String\|{coder: 0\|hash: 0\|hashIsZero: false}",shape=record];
+n2129789493 -> n1313922862[label="value",fontsize=12];
+n1313922862[shape=record, label="72\|101\|108\|108\|111"];
+}
+--
+
+|===
+
+[.fragment]
+image:evolution.png[{image-80-width}]
+
+== Java 6
+
+[source,java]
+"The quick brown fox jumps over the lazy dog".split(" ")
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 150 ];
+n1730638671[label="<f0>|<f1>|<f2>|<f3>|<f4>|<f5>|<f6>|<f7>|<f8>",shape=record];
+n1730638671:f0 -> n2140609276[label="0",fontsize=12];
+n2140609276[label="String|{offset: 0|count: 3|hash: 0}",shape=record];
+n2140609276 -> n166295158[label="value",fontsize=12];
+n166295158[shape=record, label="T|h|e| |q|u|i|c|k| |b|r|o|w|n| |f|o|x| |j|u|m|p|s| |o|v|e|r| |t|h|e| |l|a|z|y| |d|o|g"];
+n1730638671:f1 -> n1046495759[label="1",fontsize=12];
+n1046495759[label="String|{offset: 4|count: 5|hash: 0}",shape=record];
+n1046495759 -> n166295158[label="value",fontsize=12];
+n1730638671:f2 -> n563152583[label="2",fontsize=12];
+n563152583[label="String|{offset: 10|count: 5|hash: 0}",shape=record];
+n563152583 -> n166295158[label="value",fontsize=12];
+n1730638671:f3 -> n945030152[label="3",fontsize=12];
+n945030152[label="String|{offset: 16|count: 3|hash: 0}",shape=record];
+n945030152 -> n166295158[label="value",fontsize=12];
+n1730638671:f4 -> n332711452[label="4",fontsize=12];
+n332711452[label="String|{offset: 20|count: 5|hash: 0}",shape=record];
+n332711452 -> n166295158[label="value",fontsize=12];
+n1730638671:f5 -> n1981440623[label="5",fontsize=12];
+n1981440623[label="String|{offset: 26|count: 4|hash: 0}",shape=record];
+n1981440623 -> n166295158[label="value",fontsize=12];
+n1730638671:f6 -> n1043636732[label="6",fontsize=12];
+n1043636732[label="String|{offset: 31|count: 3|hash: 0}",shape=record];
+n1043636732 -> n166295158[label="value",fontsize=12];
+n1730638671:f7 -> n1903609675[label="7",fontsize=12];
+n1903609675[label="String|{offset: 35|count: 4|hash: 0}",shape=record];
+n1903609675 -> n166295158[label="value",fontsize=12];
+n1730638671:f8 -> n756434719[label="8",fontsize=12];
+n756434719[label="String|{offset: 40|count: 3|hash: 0}",shape=record];
+n756434719 -> n166295158[label="value",fontsize=12];
+}
+--
+
+
+== Java 6: memory leak
+
+[source,java]
+"The quick brown fox jumps over the lazy dog".substring(0, 3)
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+n970562125[label="String|{offset: 0|count: 3|hash: 0}",shape=record];
+n970562125 -> n209777867[label="value",fontsize=12];
+n209777867[shape=record, label="T|h|e| |q|u|i|c|k| |b|r|o|w|n| |f|o|x| |j|u|m|p|s| |o|v|e|r| |t|h|e| |l|a|z|y| |d|o|g"];
+}
+--
+
+== Java 8: no offset/count
+
+[source,java]
+"The quick brown fox jumps over the lazy dog".split(" ")
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+n460141958[label="<f0>|<f1>|<f2>|<f3>|<f4>|<f5>|<f6>|<f7>|<f8>",shape=record];
+n460141958:f0 -> n2133927002[label="0",fontsize=12];
+n2133927002[label="String|{hash: 0}",shape=record];
+n2133927002 -> n1173230247[label="value",fontsize=12];
+n1173230247[shape=record, label="T|h|e"];
+n460141958:f1 -> n856419764[label="1",fontsize=12];
+n856419764[label="String|{hash: 0}",shape=record];
+n856419764 -> n621009875[label="value",fontsize=12];
+n621009875[shape=record, label="q|u|i|c|k"];
+n460141958:f2 -> n1265094477[label="2",fontsize=12];
+n1265094477[label="String|{hash: 0}",shape=record];
+n1265094477 -> n2125039532[label="value",fontsize=12];
+n2125039532[shape=record, label="b|r|o|w|n"];
+n460141958:f3 -> n312714112[label="3",fontsize=12];
+n312714112[label="String|{hash: 0}",shape=record];
+n312714112 -> n692404036[label="value",fontsize=12];
+n692404036[shape=record, label="f|o|x"];
+n460141958:f4 -> n1554874502[label="4",fontsize=12];
+n1554874502[label="String|{hash: 0}",shape=record];
+n1554874502 -> n1846274136[label="value",fontsize=12];
+n1846274136[shape=record, label="j|u|m|p|s"];
+n460141958:f5 -> n1639705018[label="5",fontsize=12];
+n1639705018[label="String|{hash: 0}",shape=record];
+n1639705018 -> n1627674070[label="value",fontsize=12];
+n1627674070[shape=record, label="o|v|e|r"];
+n460141958:f6 -> n1360875712[label="6",fontsize=12];
+n1360875712[label="String|{hash: 0}",shape=record];
+n1360875712 -> n1625635731[label="value",fontsize=12];
+n1625635731[shape=record, label="t|h|e"];
+n460141958:f7 -> n1580066828[label="7",fontsize=12];
+n1580066828[label="String|{hash: 0}",shape=record];
+n1580066828 -> n491044090[label="value",fontsize=12];
+n491044090[shape=record, label="l|a|z|y"];
+n460141958:f8 -> n644117698[label="8",fontsize=12];
+n644117698[label="String|{hash: 0}",shape=record];
+n644117698 -> n1872034366[label="value",fontsize=12];
+n1872034366[shape=record, label="d|o|g"];
+}
+--
+
+== Java 8: no offset/count
+
+[source,java]
+"The quick brown fox jumps over the lazy dog".substring(0, 3)
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 180 ];
+n460141958[label="String|{hash: 0}",shape=record];
+n460141958 -> n1735600054[label="value",fontsize=12];
+n1735600054[shape=record, label="T|h|e"];
+}
+--
+
+== Java 8-: backed by char[]
+
+[source,java]
+new String[]{"Hello!", "Привет!"}
+
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 180 ];
+n460141958[label="<f0>|<f1>",shape=record];
+n460141958:f0 -> n2133927002[label="0",fontsize=12];
+n2133927002[label="String|{hash: 0}",shape=record];
+n2133927002 -> n1173230247[label="value",fontsize=12];
+n1173230247[shape="plaintext", label=<<table border='0' cellborder='1' cellspacing='0' cellpadding='6' ><tr><td>H</td><td>e</td><td>l</td><td>l</td><td>o</td><td>!</td></tr></table>>];
+n460141958:f1 -> n856419764[label="1",fontsize=12];
+n856419764[label="String|{hash: 0}",shape=record];
+n856419764 -> n621009875[label="value",fontsize=12];
+n621009875[shape="plaintext", label=<<table border='0' cellborder='1' cellspacing='0' cellpadding='6' ><tr><td>П</td><td>р</td><td>и</td><td>в</td><td>е</td><td>т</td><td>!</td></tr></table>>];
+}
+--
+
+== Java 9+: backed by byte[]
+
+[source,java]
+new String[]{"Hello!", "Привет!"}
+
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 180 ];
+n557041912[label="<f0>|<f1>",shape=record];
+n557041912:f0 -> n997110508[label="0",fontsize=12];
+n997110508[label="String|{coder: 0|hash: 0}",shape=record];
+n997110508 -> n2114889273[label="value",fontsize=12];
+n2114889273[shape=record, label="72|101|108|108|111|33"];
+n557041912:f1 -> n1025799482[label="1",fontsize=12];
+n1025799482[label="String|{coder: 1|hash: 0}",shape=record];
+n1025799482 -> n1504109395[label="value",fontsize=12];
+n1504109395[shape=record, label="31|4|64|4|56|4|50|4|53|4|66|4|33|0"];
+}
+--
+
+== Zero hashcode: Java 12-
+
+[source,java]
+String[] s = new String[]{"f5a5a608", "abc"};
+System.out.println(s[0].hashCode()); //0
+System.out.println(s[1].hashCode()); //96354
+
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 180 ];
+n557041912[label="<f0>|<f1>",shape=record];
+n557041912:f0 -> n997110508[label="0",fontsize=12];
+n997110508[label="String|{coder: 0|hash: 0}",shape=record];
+n997110508 -> n2114889273[label="value",fontsize=12];
+n2114889273[shape=record, label="102|53|97|53|97|54|48|56"];
+n557041912:f1 -> n1025799482[label="1",fontsize=12];
+n1025799482[label="String|{coder: 0|hash: 96354}",shape=record];
+n1025799482 -> n1504109395[label="value",fontsize=12];
+n1504109395[shape=record, label="97|98|99"];
+}
+--
+
+== Zero hashcode: Java 13+
+
+[source,java]
+String[] s = new String[]{"f5a5a608", "abc"};
+System.out.println(s[0].hashCode()); //0
+System.out.println(s[1].hashCode()); //96354
+
+[graphviz]
+--
+digraph Java {
+graph [ dpi = 180 ];
+n2129789493[label="<f0>|<f1>",shape=record];
+n2129789493:f0 -> n1595428806[label="0",fontsize=12];
+n1595428806[label="String|{coder: 0|hash: 0|hashIsZero: true}",shape=record];
+n1595428806 -> n317574433[label="value",fontsize=12];
+n317574433[shape=record, label="102|53|97|53|97|54|48|56"];
+n2129789493:f1 -> n885284298[label="1",fontsize=12];
+n885284298[label="String|{coder: 0|hash: 96354|hashIsZero: false}",shape=record];
+n885284298 -> n1389133897[label="value",fontsize=12];
+n1389133897[shape=record, label="97|98|99"];
+}
+
+--
+
+== Creation of Strings
+
+[source,java]
+LJV ljv = new LJV().addIgnoreField("hash")
+    .addIgnoreField("coder").addIgnoreField("hashIsZero");
+String x = "Hello";
+new String[]{x,
+             new String(x),
+             new String(x.toCharArray()),
+             x + "",
+             "" + x,
+             x.concat(""),
+             "".concat(x)}
+             
+== Creation of Strings (Java 15-)
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 120 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n2 -> n3[label="value",fontsize=12];
+	n1:f0 -> n2[label="0",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n3[label="value",fontsize=12];
+	n1:f1 -> n4[label="1",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n6[label="value",fontsize=12];
+	n1:f2 -> n5[label="2",fontsize=12];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n7 -> n8[label="value",fontsize=12];
+	n1:f3 -> n7[label="3",fontsize=12];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n9 -> n10[label="value",fontsize=12];
+	n1:f4 -> n9[label="4",fontsize=12];
+	n1:f5 -> n2[label="5",fontsize=12];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n12[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n11 -> n12[label="value",fontsize=12];
+	n1:f6 -> n11[label="6",fontsize=12];
+}
+--
+
+[source,java]
+    /*0*/   x,
+    /*1*/   new String(x),  //переиспользуется буфер
+    /*2*/   new String(x.toCharArray()),
+    /*3*/   x + "",
+    /*4*/   "" + x,
+    /*5*/   x.concat(""),   //переиспользуется весь x
+    /*6*/   "".concat(x)
+
+== Creation of Strings (Java 16+)
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 120 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n2 -> n3[label="value",fontsize=12];
+	n1:f0 -> n2[label="0",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n3[label="value",fontsize=12];
+	n1:f1 -> n4[label="1",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n6[label="value",fontsize=12];
+	n1:f2 -> n5[label="2",fontsize=12];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n7 -> n3[label="value",fontsize=12];
+	n1:f3 -> n7[label="3",fontsize=12];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n8 -> n3[label="value",fontsize=12];
+	n1:f4 -> n8[label="4",fontsize=12];
+	n1:f5 -> n2[label="5",fontsize=12];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n9 -> n3[label="value",fontsize=12];
+	n1:f6 -> n9[label="6",fontsize=12];
+}
+
+--
+
+[source,java]
+    /*0*/   x,
+    /*1*/   new String(x),
+    /*2*/   new String(x.toCharArray()),
+    /*3*/   x + "",
+    /*4*/   "" + x,
+    /*5*/   x.concat(""),   //переиспользуется весь x
+    /*6*/   "".concat(x)
+
+
+== String interning
+
+[cols="50a,50a"]
+|===
+|
+
+[source,java]
+--
+x,
+new String(x).intern(),
+new String(x.toCharArray()).intern(),
+(x + "").intern(),
+("" + x).intern(),
+x.concat("").intern(),
+"".concat(x).intern()
+
+--
+.^|
+[.fragment]
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 150 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>String</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>72</td>
+				<td>101</td>
+				<td>108</td>
+				<td>108</td>
+				<td>111</td>
+			</tr>
+		</table>
+	>];
+	n2 -> n3[label="value",fontsize=12];
+	n1:f0 -> n2[label="0",fontsize=12];
+	n1:f1 -> n2[label="1",fontsize=12];
+	n1:f2 -> n2[label="2",fontsize=12];
+	n1:f3 -> n2[label="3",fontsize=12];
+	n1:f4 -> n2[label="4",fontsize=12];
+	n1:f5 -> n2[label="5",fontsize=12];
+	n1:f6 -> n2[label="6",fontsize=12];
+}
+--
+|===
+
+== Interim Conclusions
+
+* Switch to newer versions of Java, strings are getting better and better!
+
+* When performance analysis suggests, perform string deduplication (but not through `intern()`).
+
+
+== Further Viewing
+
+* Alexey Shipilev
+** https://www.youtube.com/watch?v=YgGAUGC9ksk[ java.lang.String Catechism]
+** https://www.youtube.com/watch?v=wIyeOaitmWM[The Lord Of The Strings]
+
+////
+* Tagir Valeev
+** https://jugspeakers.online/ru/talk/2254.html[Ещё немного маленьких оптимизаций (JPoint 2020, 29.06.2020)]
+* Sergey Tsipanov
+** https://jugspeakers.online/ru/talk/2239.html[Ах, эти строки (JPoint 2020, 29.06.2020)]
+////
+
+== Deduplication (caching) of boxed primitives
+
+[source,java]
+new Integer[]{
+    42,
+    42,
+    Integer.valueOf(42),
+    new Integer(42),
+    -4242, 
+    -4242
+}
+
+== Deduplication (caching) of boxed primitives
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 180 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 42</td>
+			</tr>
+		</table>
+	>];
+	n1:f0 -> n2[label="0",fontsize=12];
+	n1:f1 -> n2[label="1",fontsize=12];
+	n1:f2 -> n2[label="2",fontsize=12];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 42</td>
+			</tr>
+		</table>
+	>];
+	n1:f3 -> n3[label="3",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: -4242</td>
+			</tr>
+		</table>
+	>];
+	n1:f4 -> n4[label="4",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: -4242</td>
+			</tr>
+		</table>
+	>];
+	n1:f5 -> n5[label="5",fontsize=12];
+}
+--
+
+[source,java]
+/*0*/ 42,
+/*1*/ 42, // deduplicated range -128 .. 127
+          // or -128 .. -XX:AutoBoxCacheMax
+/*2*/ Integer.valueOf(42), //deduplicated
+/*3*/ new Integer(42),   //NOT deduplicated, deprecated since Java9
+/*4*/ -4242,               
+/*5*/ -4242              //not deduplicated (outside of the range)
+
+
+== Interim Conclusions
+
+* Remember about deduplication of boxed primitives.
+* If performance analysis indicates, use libraries:
+** https://github.com/vigna/fastutil[fastutil] 
+** https://github.com/eclipse/eclipse-collections[Eclipse collections] primitive collections
+** ...
+** ...or wait for Valhalla (generic specialization).
+
+== Our Plan
+
+* [line-through]#Strings and Primitive Wrappers#
+* *Queues*
+* `Map` and `ConcurrentMap`
+* `NavigableMap` and `ConcurrentNavigableMap`
+
+== `LinkedList` (implements `List`, `Deque`)
+
+[source,java]
+--
+LJV ljv = new LJV().setDirection(Direction.LR)
+    .addFieldAttribute("last", "constraint=false")
+    .addFieldAttribute("prev", "constraint=false")
+    .setTreatAsPrimitive(Integer.class);
+
+List<Integer> list = new LinkedList<>();
+list.add(1); list.add(2); list.add(3); list.add(4);
+visualize(ljv, list);
+--
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext];
+	graph [ dpi = 180 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>LinkedList</td>
+			</tr>
+			<tr>
+				<td>size: 4</td>
+			</tr>
+			<tr>
+				<td>modCount: 4</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>prev: null</td>
+			</tr>
+			<tr>
+				<td>item: 1</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 2</td>
+			</tr>
+		</table>
+	>];
+	n3 -> n2[label="prev",fontsize=12,constraint=false];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 3</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n3[label="prev",fontsize=12,constraint=false];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>next: null</td>
+			</tr>
+			<tr>
+				<td>item: 4</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n4[label="prev",fontsize=12,constraint=false];
+	n4 -> n5[label="next",fontsize=12];
+	n3 -> n4[label="next",fontsize=12];
+	n2 -> n3[label="next",fontsize=12];
+	n1 -> n2[label="first",fontsize=12];
+	n1 -> n5[label="last",fontsize=12,constraint=false];
+}
+--
+
+== Do we need `LinkedList` in Java?
+
+image::whouselinkedlist.png[]
+
+== `ArrayDeque`
+
+[source,java]
+----
+LJV ljv = new LJV()
+    .setTreatAsPrimitive(Integer.class)
+    .highlightChangingArrayElements();
+----
+
+== `ArrayDeque`
+
+[source,java]
+----
+//note that this sets initial capacity to 5!
+Deque<Integer> arrayDeque = new ArrayDeque<>(4);
+arrayDeque.add(1); arrayDeque.add(2); arrayDeque.add(3);
+visualize(ljv, arrayDeque);
+----
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 180 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>ArrayDeque</td>
+			</tr>
+			<tr>
+				<td>tail: 3</td>
+			</tr>
+			<tr>
+				<td>head: 0</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>1</td>
+				<td>2</td>
+				<td>3</td>
+				<td>null</td>
+				<td>null</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="elements",fontsize=12];
+}
+--
+
+== `ArrayDeque`
+
+[source,java]
+----
+        arrayDeque.poll(); //returns 1
+        arrayDeque.poll(); //returns 2
+        visualize(ljv, arrayDeque);
+----
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 180 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>ArrayDeque</td>
+			</tr>
+			<tr>
+				<td>tail: 3</td>
+			</tr>
+			<tr>
+				<td>head: 2</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td bgcolor="yellow">null</td>
+				<td bgcolor="yellow">null</td>
+				<td>3</td>
+				<td>null</td>
+				<td>null</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="elements",fontsize=12];
+}
+
+--
+
+== `ArrayDeque`
+
+[source,java]
+----
+    arrayDeque.add(4); arrayDeque.add(5); arrayDeque.add(6);
+    visualize(ljv, arrayDeque);
+----
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 180 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>ArrayDeque</td>
+			</tr>
+			<tr>
+				<td>tail: 1</td>
+			</tr>
+			<tr>
+				<td>head: 2</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td bgcolor="yellow">6</td>
+				<td>null</td>
+				<td>3</td>
+				<td bgcolor="yellow">4</td>
+				<td bgcolor="yellow">5</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="elements",fontsize=12];
+}
+--
+
+== `PriorityQueue`
+
+[source,java]
+--
+List<Integer> list = IntStream.range(0, 16)
+                     .boxed()
+                     .collect(Collectors.toList());
+Collections.shuffle(list);
+visualize(new LJV().setTreatAsPrimitive(Integer.class),
+          list.toArray());
+--
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 210 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>9</td>
+				<td>5</td>
+				<td>3</td>
+				<td>12</td>
+				<td>15</td>
+				<td>0</td>
+				<td>2</td>
+				<td>13</td>
+				<td>6</td>
+				<td>11</td>
+				<td>10</td>
+				<td>8</td>
+				<td>14</td>
+				<td>4</td>
+				<td>1</td>
+				<td>7</td>
+			</tr>
+		</table>
+	>];
+}
+
+--
+
+== `PriorityQueue`
+
+[source,java]
+--
+LJV ljv = new LJV().setTreatAsPrimitive(Integer.class)
+                .setIgnoreNullValuedFields(true)
+                .highlightChangingArrayElements();
+PriorityQueue<Integer> q = new PriorityQueue<>(16);
+q.addAll(list);
+visualize(ljv, q);
+--
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 180 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>PriorityQueue</td>
+			</tr>
+			<tr>
+				<td>size: 16</td>
+			</tr>
+			<tr>
+				<td>modCount: 16</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>0</td>
+				<td>6</td>
+				<td>1</td>
+				<td>7</td>
+				<td>10</td>
+				<td>5</td>
+				<td>2</td>
+				<td>9</td>
+				<td>12</td>
+				<td>15</td>
+				<td>11</td>
+				<td>8</td>
+				<td>14</td>
+				<td>4</td>
+				<td>3</td>
+				<td>13</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="queue",fontsize=12];
+}
+--
+
+== `PriorityQueue`: what's the trick?
+
+* Binary min-heap, invariants:
+** stem:[q[n\] \leq q[2n + 1\]]
+** stem:[q[n\] \leq q[2n+2\]]
+* Consequence:
+** stem:[q[0\] = \min(q)]
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 180 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>PriorityQueue</td>
+			</tr>
+			<tr>
+				<td>size: 16</td>
+			</tr>
+			<tr>
+				<td>modCount: 16</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>0</td>
+				<td>6</td>
+				<td>1</td>
+				<td>7</td>
+				<td>10</td>
+				<td>5</td>
+				<td>2</td>
+				<td>9</td>
+				<td>12</td>
+				<td>15</td>
+				<td>11</td>
+				<td>8</td>
+				<td>14</td>
+				<td>4</td>
+				<td>3</td>
+				<td>13</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="queue",fontsize=12];
+}
+--
+
+== Deletion
+
+[source,java]
+q.poll();
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 180 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>PriorityQueue</td>
+			</tr>
+			<tr>
+				<td>size: 15</td>
+			</tr>
+			<tr>
+				<td>modCount: 17</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td bgcolor="yellow">1</td>
+				<td>6</td>
+				<td bgcolor="yellow">2</td>
+				<td>7</td>
+				<td>10</td>
+				<td>5</td>
+				<td bgcolor="yellow">3</td>
+				<td>9</td>
+				<td>12</td>
+				<td>15</td>
+				<td>11</td>
+				<td>8</td>
+				<td>14</td>
+				<td>4</td>
+				<td bgcolor="yellow">13</td>
+				<td bgcolor="yellow">null</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="queue",fontsize=12];
+}
+--
+
+== Deletion
+
+[source,java]
+q.poll();
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 180 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>PriorityQueue</td>
+			</tr>
+			<tr>
+				<td>size: 14</td>
+			</tr>
+			<tr>
+				<td>modCount: 18</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td bgcolor="yellow">2</td>
+				<td>6</td>
+				<td bgcolor="yellow">3</td>
+				<td>7</td>
+				<td>10</td>
+				<td>5</td>
+				<td bgcolor="yellow">4</td>
+				<td>9</td>
+				<td>12</td>
+				<td>15</td>
+				<td>11</td>
+				<td>8</td>
+				<td>14</td>
+				<td bgcolor="yellow">13</td>
+				<td bgcolor="yellow">null</td>
+				<td>null</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="queue",fontsize=12];
+}
+
+--
+
+== Deletion
+
+[source,java]
+q.poll();
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 180 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>PriorityQueue</td>
+			</tr>
+			<tr>
+				<td>size: 13</td>
+			</tr>
+			<tr>
+				<td>modCount: 19</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td bgcolor="yellow">3</td>
+				<td>6</td>
+				<td bgcolor="yellow">4</td>
+				<td>7</td>
+				<td>10</td>
+				<td>5</td>
+				<td bgcolor="yellow">13</td>
+				<td>9</td>
+				<td>12</td>
+				<td>15</td>
+				<td>11</td>
+				<td>8</td>
+				<td>14</td>
+				<td bgcolor="yellow">null</td>
+				<td>null</td>
+				<td>null</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="queue",fontsize=12];
+}
+--
+
+== Adding an element
+
+[source,java]
+q.add(1);
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 180 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>PriorityQueue</td>
+			</tr>
+			<tr>
+				<td>size: 14</td>
+			</tr>
+			<tr>
+				<td>modCount: 20</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td bgcolor="yellow">1</td>
+				<td>6</td>
+				<td bgcolor="yellow">3</td>
+				<td>7</td>
+				<td>10</td>
+				<td>5</td>
+				<td bgcolor="yellow">4</td>
+				<td>9</td>
+				<td>12</td>
+				<td>15</td>
+				<td>11</td>
+				<td>8</td>
+				<td>14</td>
+				<td bgcolor="yellow">13</td>
+				<td>null</td>
+				<td>null</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="queue",fontsize=12];
+}
+
+--
+
+== Concurrent Lock-free Queue/Deque?
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext];
+	graph [ dpi = 180 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>ConcurrentLinkedQueue</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 4</td>
+			</tr>
+			<tr>
+				<td>next: null</td>
+			</tr>
+		</table>
+	>];
+	n1 -> n2[label="tail",fontsize=12,constraint="false"];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: null</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 1</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 2</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 3</td>
+			</tr>
+		</table>
+	>];
+	n6 -> n2[label="next",fontsize=12];
+	n5 -> n6[label="next",fontsize=12];
+	n4 -> n5[label="next",fontsize=12];
+	n3 -> n4[label="next",fontsize=12];
+	n1 -> n3[label="head",fontsize=12];
+}
+
+--
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext];
+	graph [ dpi = 180 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>ConcurrentLinkedDeque</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 4</td>
+			</tr>
+			<tr>
+				<td>next: null</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 3</td>
+			</tr>
+		</table>
+	>];
+	n3 -> n2[label="next",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 2</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n3[label="next",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>item: 1</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n4[label="next",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>item: null</td>
+			</tr>
+			<tr>
+				<td>prev: null</td>
+			</tr>
+		</table>
+	>];
+	n6 -> n5[label="next",fontsize=12];
+	n5 -> n6[label="prev",fontsize=12,constraint=false];
+	n4 -> n5[label="prev",fontsize=12,constraint=false];
+	n3 -> n4[label="prev",fontsize=12,constraint=false];
+	n2 -> n3[label="prev",fontsize=12,constraint=false];
+	n1 -> n2[label="tail",fontsize=12,constraint=false];
+	n1 -> n6[label="head",fontsize=12];
+}
+
+--
+
+== Interim Conclusions
+
+* `java.util.LinkedList` is usless, use `ArrayList` / `ArrayDeque` / `PriorityQueue` instead.
+* Arrays are a very powerful foundation for building efficient data structures!
+* If thread safety and non-blocking behavior are needed, the idea of a linked list starts working again in `ConcurrentLinkedQueue` / `ConcurrentLinkedDeque`.
+
+== Our Plan
+
+* [line-through]#Strings and Primitive Wrappers#
+* [line-through]#Queues#
+* *`Map` and `ConcurrentMap`*
+* `NavigableMap` and `ConcurrentNavigableMap`
+
+== His Magesty `HashMap`
+
+[source,java]
+--
+LJV ljv = new LJV()
+    .setIgnoreNullValuedFields(true)
+    .setTreatAsPrimitive(Integer.class)
+    .setTreatAsPrimitive(String.class);
+
+Map<String, Integer> map = new HashMap<>();
+map.put("one", 1);   map.put("two", 2);
+map.put("three", 3); map.put("four", 4);
+visualize(ljv, map);
+--
+
+== His Magesty `HashMap`
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 130 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='5'>HashMap</td>
+			</tr>
+			<tr>
+				<td>threshold: 12</td>
+			</tr>
+			<tr>
+				<td>modCount: 4</td>
+			</tr>
+			<tr>
+				<td>size: 4</td>
+			</tr>
+			<tr>
+				<td>loadFactor: 0.75</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+				<td port="f8"></td>
+				<td port="f9"></td>
+				<td port="f10"></td>
+				<td port="f11"></td>
+				<td port="f12"></td>
+				<td port="f13"></td>
+				<td port="f14"></td>
+				<td port="f15"></td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 3149078</td>
+			</tr>
+			<tr>
+				<td>key: four</td>
+			</tr>
+			<tr>
+				<td>value: 4</td>
+			</tr>
+		</table>
+	>];
+	n2:f6 -> n3[label="6",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 110183</td>
+			</tr>
+			<tr>
+				<td>key: one</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>];
+	n2:f7 -> n4[label="7",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 115277</td>
+			</tr>
+			<tr>
+				<td>key: two</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 110338829</td>
+			</tr>
+			<tr>
+				<td>key: three</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n6[label="next",fontsize=12];
+	n2:f13 -> n5[label="13",fontsize=12];
+	n1 -> n2[label="table",fontsize=12];
+}
+--
+
+== Prepare visualization
+
+[source,java]
+--
+LJV ljv = new LJV()
+    .setIgnoreNullValuedFields(true)
+    .setTreatAsPrimitive(Integer.class)
+    .setTreatAsPrimitive(String.class)
+    .addIgnoreField("value")
+    .addFieldAttribute("prev", "constraint=false,color=green")
+    .addFieldAttribute("next", "constraint=false,color=green")
+    .addObjectAttributesProvider(Main::redBlackForHM);
+    
+//redBlackForHM: red ? "color=red" : "color=black";
+--
+
+== Prepare collisions
+
+[source,java]
+--
+List<String> collisions = 
+    new HashCodeCollision().genCollisionString(7);
+Map<String, Integer> map = new HashMap<>();
+
+for (int i = 0; i < len; i++) {
+    map.put(collisions.get(i), i);
+}
+visualize(ljv, map);
+--
+
+== 6 collisions
+
+
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='5'>HashMap</td>
+			</tr>
+			<tr>
+				<td>threshold: 12</td>
+			</tr>
+			<tr>
+				<td>modCount: 6</td>
+			</tr>
+			<tr>
+				<td>size: 6</td>
+			</tr>
+			<tr>
+				<td>loadFactor: 0.75</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+				<td port="f8"></td>
+				<td port="f9"></td>
+				<td port="f10"></td>
+				<td port="f11"></td>
+				<td port="f12"></td>
+				<td port="f13"></td>
+				<td port="f14"></td>
+				<td port="f15"></td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: Aaaaaaa</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaaaabB</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaaabBa</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaabBaa</td>
+			</tr>
+		</table>
+	>];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaabBbB</td>
+			</tr>
+		</table>
+	>];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Node</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AabBaaa</td>
+			</tr>
+		</table>
+	>];
+	n7 -> n8[label="next",fontsize=12,constraint=false,color=green];
+	n6 -> n7[label="next",fontsize=12,constraint=false,color=green];
+	n5 -> n6[label="next",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="next",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="next",fontsize=12,constraint=false,color=green];
+	n2:f14 -> n3[label="14",fontsize=12];
+	n1 -> n2[label="table",fontsize=12];
+}
+
+--
+
+== 11 collisions, Java 8+: treeification
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='5'>HashMap</td>
+			</tr>
+			<tr>
+				<td>threshold: 48</td>
+			</tr>
+			<tr>
+				<td>modCount: 11</td>
+			</tr>
+			<tr>
+				<td>size: 11</td>
+			</tr>
+			<tr>
+				<td>loadFactor: 0.75</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+				<td port="f8"></td>
+				<td port="f9"></td>
+				<td port="f10"></td>
+				<td port="f11"></td>
+				<td port="f12"></td>
+				<td port="f13"></td>
+				<td port="f14"></td>
+				<td port="f15"></td>
+				<td port="f16"></td>
+				<td port="f17"></td>
+				<td port="f18"></td>
+				<td port="f19"></td>
+				<td port="f20"></td>
+				<td port="f21"></td>
+				<td port="f22"></td>
+				<td port="f23"></td>
+				<td port="f24"></td>
+				<td port="f25"></td>
+				<td port="f26"></td>
+				<td port="f27"></td>
+				<td port="f28"></td>
+				<td port="f29"></td>
+				<td port="f30"></td>
+				<td port="f31"></td>
+				<td port="f32"></td>
+				<td port="f33"></td>
+				<td port="f34"></td>
+				<td port="f35"></td>
+				<td port="f36"></td>
+				<td port="f37"></td>
+				<td port="f38"></td>
+				<td port="f39"></td>
+				<td port="f40"></td>
+				<td port="f41"></td>
+				<td port="f42"></td>
+				<td port="f43"></td>
+				<td port="f44"></td>
+				<td port="f45"></td>
+				<td port="f46"></td>
+				<td port="f47"></td>
+				<td port="f48"></td>
+				<td port="f49"></td>
+				<td port="f50"></td>
+				<td port="f51"></td>
+				<td port="f52"></td>
+				<td port="f53"></td>
+				<td port="f54"></td>
+				<td port="f55"></td>
+				<td port="f56"></td>
+				<td port="f57"></td>
+				<td port="f58"></td>
+				<td port="f59"></td>
+				<td port="f60"></td>
+				<td port="f61"></td>
+				<td port="f62"></td>
+				<td port="f63"></td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaabBaa</td>
+			</tr>
+		</table>
+	>,color=black];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaaaabB</td>
+			</tr>
+		</table>
+	>,color=black];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: Aaaaaaa</td>
+			</tr>
+		</table>
+	>,color=black];
+	n5 -> n3[label="prev",fontsize=12,constraint=false,color=green];
+	n5 -> n4[label="parent",fontsize=12];
+	n5 -> n4[label="next",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="left",fontsize=12];
+	n4 -> n5[label="prev",fontsize=12,constraint=false,color=green];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaaabBa</td>
+			</tr>
+		</table>
+	>,color=black];
+	n6 -> n4[label="prev",fontsize=12,constraint=false,color=green];
+	n6 -> n4[label="parent",fontsize=12];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AaabBbB</td>
+			</tr>
+		</table>
+	>,color=black];
+	n7 -> n6[label="prev",fontsize=12,constraint=false,color=green];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AabBaaa</td>
+			</tr>
+		</table>
+	>,color=black];
+	n8 -> n7[label="left",fontsize=12];
+	n8 -> n7[label="prev",fontsize=12,constraint=false,color=green];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AabBbBa</td>
+			</tr>
+		</table>
+	>,color=red];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AabBabB</td>
+			</tr>
+		</table>
+	>,color=black];
+	n10 -> n8[label="prev",fontsize=12,constraint=false,color=green];
+	n10 -> n9[label="parent",fontsize=12];
+	n10 -> n9[label="next",fontsize=12,constraint=false,color=green];
+	n9 -> n10[label="left",fontsize=12];
+	n9 -> n10[label="prev",fontsize=12,constraint=false,color=green];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AbBaabB</td>
+			</tr>
+		</table>
+	>,color=black];
+	n12[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AbBaaaa</td>
+			</tr>
+		</table>
+	>,color=red];
+	n12 -> n9[label="prev",fontsize=12,constraint=false,color=green];
+	n12 -> n11[label="parent",fontsize=12];
+	n12 -> n11[label="next",fontsize=12,constraint=false,color=green];
+	n11 -> n12[label="left",fontsize=12];
+	n11 -> n12[label="prev",fontsize=12,constraint=false,color=green];
+	n13[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeNode</td>
+			</tr>
+			<tr>
+				<td>hash: 427789982</td>
+			</tr>
+			<tr>
+				<td>key: AbBabBa</td>
+			</tr>
+		</table>
+	>,color=red];
+	n13 -> n11[label="prev",fontsize=12,constraint=false,color=green];
+	n13 -> n11[label="parent",fontsize=12];
+	n11 -> n13[label="right",fontsize=12];
+	n11 -> n9[label="parent",fontsize=12];
+	n11 -> n13[label="next",fontsize=12,constraint=false,color=green];
+	n9 -> n11[label="right",fontsize=12];
+	n9 -> n8[label="parent",fontsize=12];
+	n9 -> n12[label="next",fontsize=12,constraint=false,color=green];
+	n8 -> n9[label="right",fontsize=12];
+	n8 -> n3[label="parent",fontsize=12];
+	n8 -> n10[label="next",fontsize=12,constraint=false,color=green];
+	n7 -> n8[label="parent",fontsize=12];
+	n7 -> n8[label="next",fontsize=12,constraint=false,color=green];
+	n6 -> n7[label="next",fontsize=12,constraint=false,color=green];
+	n4 -> n6[label="right",fontsize=12];
+	n4 -> n3[label="parent",fontsize=12];
+	n4 -> n6[label="next",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="left",fontsize=12];
+	n3 -> n8[label="right",fontsize=12];
+	n3 -> n5[label="next",fontsize=12,constraint=false,color=green];
+	n2:f30 -> n3[label="30",fontsize=12];
+	n1 -> n2[label="table",fontsize=12];
+}
+--
+
+== TreeNode
+
+[source,java]
+--
+static final class TreeNode<K,V> extends LinkedHashMap.Entry<K,V> {
+    TreeNode<K,V> parent;  // red-black tree links
+    TreeNode<K,V> left;
+    TreeNode<K,V> right;
+    TreeNode<K,V> prev;    // needed to unlink next upon deletion
+    boolean red;
+--
+
+[.fragment]
+`LinkedHashMap.Entry`?!
+
+== LinkedHashMap: nearly ready LRU cache
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='6'>LinkedHashMap</td>
+			</tr>
+			<tr>
+				<td>threshold: 12</td>
+			</tr>
+			<tr>
+				<td>accessOrder: false</td>
+			</tr>
+			<tr>
+				<td>modCount: 4</td>
+			</tr>
+			<tr>
+				<td>size: 4</td>
+			</tr>
+			<tr>
+				<td>loadFactor: 0.75</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 110183</td>
+			</tr>
+			<tr>
+				<td>key: one</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 115277</td>
+			</tr>
+			<tr>
+				<td>key: two</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>];
+	n3 -> n2[label="before",fontsize=12,constraint=false,color=green];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 110338829</td>
+			</tr>
+			<tr>
+				<td>key: three</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n3[label="before",fontsize=12,constraint=false,color=green];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 3149078</td>
+			</tr>
+			<tr>
+				<td>key: four</td>
+			</tr>
+			<tr>
+				<td>value: 4</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n4[label="before",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="after",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="after",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="next",fontsize=12];
+	n2 -> n3[label="after",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12,constraint=false,color=green];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+				<td port="f8"></td>
+				<td port="f9"></td>
+				<td port="f10"></td>
+				<td port="f11"></td>
+				<td port="f12"></td>
+				<td port="f13"></td>
+				<td port="f14"></td>
+				<td port="f15"></td>
+			</tr>
+		</table>
+	>];
+	n6:f6 -> n5[label="6",fontsize=12];
+	n6:f7 -> n2[label="7",fontsize=12];
+	n6:f13 -> n3[label="13",fontsize=12];
+	n1 -> n6[label="table",fontsize=12];
+	n1 -> n5[label="tail",fontsize=12,constraint=false,color=green];
+}
+--
+
+== LinkedHashMap: access order mode
+
+[source,java]
+--
+Map<String, Integer> map = new LinkedHashMap<>(5, 0.8f,
+                    /*accessOrder:*/ true);
+map.put("one", 1);   map.put("two", 2);
+map.put("three", 3); map.put("four", 4);
+--
+
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='6'>LinkedHashMap</td>
+			</tr>
+			<tr>
+				<td>threshold: 6</td>
+			</tr>
+			<tr>
+				<td>accessOrder: true</td>
+			</tr>
+			<tr>
+				<td>modCount: 4</td>
+			</tr>
+			<tr>
+				<td>size: 4</td>
+			</tr>
+			<tr>
+				<td>loadFactor: 0.8</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 110183</td>
+			</tr>
+			<tr>
+				<td>key: one</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 115277</td>
+			</tr>
+			<tr>
+				<td>key: two</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>];
+	n3 -> n2[label="before",fontsize=12,color=green,constraint=false];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 110338829</td>
+			</tr>
+			<tr>
+				<td>key: three</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n3[label="before",fontsize=12,color=green,constraint=false];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 3149078</td>
+			</tr>
+			<tr>
+				<td>key: four</td>
+			</tr>
+			<tr>
+				<td>value: 4</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n4[label="before",fontsize=12,color=green,constraint=false];
+	n4 -> n5[label="after",fontsize=12,color=green];
+	n3 -> n4[label="after",fontsize=12,color=green];
+	n3 -> n4[label="next",fontsize=12,constraint=false];
+	n2 -> n3[label="after",fontsize=12,color=green];
+	n1 -> n2[label="head",fontsize=12,color=green,constraint=false];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+			</tr>
+		</table>
+	>];
+	n6:f5 -> n3[label="5",fontsize=12];
+	n6:f6 -> n5[label="6",fontsize=12];
+	n6:f7 -> n2[label="7",fontsize=12];
+	n1 -> n6[label="table",fontsize=12];
+	n1 -> n5[label="tail",fontsize=12,color=green,constraint=false];
+}
+--
+
+== LinkedHashMap: access order mode
+
+[source,java]
+--
+map.get("two");
+--
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='6'>LinkedHashMap</td>
+			</tr>
+			<tr>
+				<td>threshold: 6</td>
+			</tr>
+			<tr>
+				<td>accessOrder: true</td>
+			</tr>
+			<tr>
+				<td>modCount: 5</td>
+			</tr>
+			<tr>
+				<td>size: 4</td>
+			</tr>
+			<tr>
+				<td>loadFactor: 0.8</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 110183</td>
+			</tr>
+			<tr>
+				<td>key: one</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 110338829</td>
+			</tr>
+			<tr>
+				<td>key: three</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>];
+	n3 -> n2[label="before",fontsize=12,color=green,constraint=false];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 3149078</td>
+			</tr>
+			<tr>
+				<td>key: four</td>
+			</tr>
+			<tr>
+				<td>value: 4</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n3[label="before",fontsize=12,color=green,constraint=false];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Entry</td>
+			</tr>
+			<tr>
+				<td>hash: 115277</td>
+			</tr>
+			<tr>
+				<td>key: two</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>];
+	n5 -> n4[label="before",fontsize=12,color=green,constraint=false];
+	n5 -> n3[label="next",fontsize=12,constraint=false];
+	n4 -> n5[label="after",fontsize=12,color=green];
+	n3 -> n4[label="after",fontsize=12,color=green];
+	n2 -> n3[label="after",fontsize=12,color=green];
+	n1 -> n2[label="head",fontsize=12,color=green,constraint=false];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+			</tr>
+		</table>
+	>];
+	n6:f5 -> n5[label="5",fontsize=12];
+	n6:f6 -> n4[label="6",fontsize=12];
+	n6:f7 -> n2[label="7",fontsize=12];
+	n1 -> n6[label="table",fontsize=12];
+	n1 -> n5[label="tail",fontsize=12,color=green,constraint=false];
+}
+--
+
+== MapN: the immutable hash map
+
+[source,java]
+--
+ljv = new LJV().setIgnoreNullValuedFields(true);
+
+Map.of(1, 'A', 2, 'B', 3, 'C', 4, 'D'));
+--
+
+[.fragment]
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 120 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>MapN</td>
+			</tr>
+			<tr>
+				<td>size: 4</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+				<td port="f8"></td>
+				<td port="f9"></td>
+				<td port="f10"></td>
+				<td port="f11"></td>
+				<td port="f12"></td>
+				<td port="f13"></td>
+				<td port="f14"></td>
+				<td port="f15"></td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>];
+	n2:f2 -> n3[label="2",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Character</td>
+			</tr>
+			<tr>
+				<td>value: A</td>
+			</tr>
+		</table>
+	>];
+	n2:f3 -> n4[label="3",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>];
+	n2:f4 -> n5[label="4",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Character</td>
+			</tr>
+			<tr>
+				<td>value: B</td>
+			</tr>
+		</table>
+	>];
+	n2:f5 -> n6[label="5",fontsize=12];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>];
+	n2:f6 -> n7[label="6",fontsize=12];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Character</td>
+			</tr>
+			<tr>
+				<td>value: C</td>
+			</tr>
+		</table>
+	>];
+	n2:f7 -> n8[label="7",fontsize=12];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 4</td>
+			</tr>
+		</table>
+	>];
+	n2:f8 -> n9[label="8",fontsize=12];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Character</td>
+			</tr>
+			<tr>
+				<td>value: D</td>
+			</tr>
+		</table>
+	>];
+	n2:f9 -> n10[label="9",fontsize=12];
+	n1 -> n2[label="table",fontsize=12];
+}
+--
+
+== Collisions in MapN: linear probing
+
+[source,java]
+ Map.of("aaa", 1, "abB", 2, "bBa", 3)
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	graph [ dpi = 120 ];
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>MapN</td>
+			</tr>
+			<tr>
+				<td>size: 3</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+				<td port="f8"></td>
+				<td port="f9"></td>
+				<td port="f10"></td>
+				<td port="f11"></td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>String</td>
+			</tr>
+			<tr>
+				<td>hash: 96321</td>
+			</tr>
+			<tr>
+				<td>coder: 0</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>97</td>
+				<td>97</td>
+				<td>97</td>
+			</tr>
+		</table>
+	>];
+	n3 -> n4[label="value",fontsize=12];
+	n2:f6 -> n3[label="6",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>];
+	n2:f7 -> n5[label="7",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>String</td>
+			</tr>
+			<tr>
+				<td>hash: 96321</td>
+			</tr>
+			<tr>
+				<td>coder: 0</td>
+			</tr>
+		</table>
+	>];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>97</td>
+				<td>98</td>
+				<td>66</td>
+			</tr>
+		</table>
+	>];
+	n6 -> n7[label="value",fontsize=12];
+	n2:f8 -> n6[label="8",fontsize=12];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>];
+	n2:f9 -> n8[label="9",fontsize=12];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>String</td>
+			</tr>
+			<tr>
+				<td>hash: 96321</td>
+			</tr>
+			<tr>
+				<td>coder: 0</td>
+			</tr>
+		</table>
+	>];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>98</td>
+				<td>66</td>
+				<td>97</td>
+			</tr>
+		</table>
+	>];
+	n9 -> n10[label="value",fontsize=12];
+	n2:f10 -> n9[label="10",fontsize=12];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Integer</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>];
+	n2:f11 -> n11[label="11",fontsize=12];
+	n1 -> n2[label="table",fontsize=12];
+}
+--
+
+
+== ConcurrentHashMap
+
+[source,java]
+--
+Map<String, Integer> map =
+                new ConcurrentHashMap<String, Integer>(
+                        /*initialCapacity:*/16 ,
+                        /*loadFactor:*/0.75f,
+                        /*concurrencyLevel:*/8);
+
+map.put("one", 1);
+map.put("two", 2);
+map.put("three", 3);
+map.put("four", 4);
+map.put("five", 5);
+visualize(map);
+--
+
+
+== ConcurrentHashMap: Java 7-
+
+[graphviz]
+--
+digraph Java {
+n382319160[label="ConcurrentHashMap|{segmentMask: 7|segmentShift: 29|keySet: null|entrySet: null|values: null}",shape=record];
+n382319160 -> n521751118[label="segments",fontsize=12];
+n521751118[label="<f0>|<f1>|<f2>|<f3>|<f4>|<f5>|<f6>|<f7>",shape=record];
+n521751118:f0 -> n564898696[label="0",fontsize=12];
+n564898696[label="Segment|{count: 0|modCount: 0|threshold: 1|loadFactor: 0.75}",shape=record];
+n564898696 -> n1981440623[label="table",fontsize=12];
+n1981440623[shape=record, label="null|null"];
+n521751118:f1 -> n1043636732[label="1",fontsize=12];
+n1043636732[label="Segment|{count: 2|modCount: 2|threshold: 1|loadFactor: 0.75}",shape=record];
+n1043636732 -> n1903609675[label="table",fontsize=12];
+n1903609675[label="<f0>|<f1>",shape=record];
+n1903609675:f0 -> n295131993[label="0",fontsize=12];
+n295131993[label="HashEntry|{key: five|hash: 553292222|value: 5|next: null}",shape=record];
+n1903609675:f1 -> n1743665428[label="1",fontsize=12];
+n1743665428[label="HashEntry|{key: three|hash: 1047845927|value: 3|next: null}",shape=record];
+n521751118:f2 -> n1419115801[label="2",fontsize=12];
+n1419115801[label="Segment|{count: 0|modCount: 0|threshold: 1|loadFactor: 0.75}",shape=record];
+n1419115801 -> n1125883825[label="table",fontsize=12];
+n1125883825[shape=record, label="null|null"];
+n521751118:f3 -> n1251033058[label="3",fontsize=12];
+n1251033058[label="Segment|{count: 2|modCount: 2|threshold: 1|loadFactor: 0.75}",shape=record];
+n1251033058 -> n100218029[label="table",fontsize=12];
+n100218029[label="<f0>|<f1>",shape=record];
+n100218029:f0 -> n737234155[label="0",fontsize=12];
+n737234155[label="HashEntry|{key: one|hash: 1919294914|value: 1|next: null}",shape=record];
+n100218029:f1 -> n1861283542[label="1",fontsize=12];
+n1861283542[label="HashEntry|{key: four|hash: 1850787001|value: 4|next: null}",shape=record];
+n521751118:f4 -> n476651318[label="4",fontsize=12];
+n476651318[label="Segment|{count: 0|modCount: 0|threshold: 1|loadFactor: 0.75}",shape=record];
+n476651318 -> n183062162[label="table",fontsize=12];
+n183062162[shape=record, label="null|null"];
+n521751118:f5 -> n1529174230[label="5",fontsize=12];
+n1529174230[label="Segment|{count: 1|modCount: 1|threshold: 1|loadFactor: 0.75}",shape=record];
+n1529174230 -> n1894479961[label="table",fontsize=12];
+n1894479961[label="<f0>|<f1>",shape=record];
+n1894479961:f0 -> n1932154105[label="0",fontsize=12];
+n1932154105[label="HashEntry|{key: two|hash: -1406597098|value: 2|next: null}",shape=record];
+n521751118:f6 -> n1613816448[label="6",fontsize=12];
+n1613816448[label="Segment|{count: 0|modCount: 0|threshold: 1|loadFactor: 0.75}",shape=record];
+n1613816448 -> n694579926[label="table",fontsize=12];
+n694579926[shape=record, label="null|null"];
+n521751118:f7 -> n332181545[label="7",fontsize=12];
+n332181545[label="Segment|{count: 0|modCount: 0|threshold: 1|loadFactor: 0.75}",shape=record];
+n332181545 -> n1665228262[label="table",fontsize=12];
+n1665228262[shape=record, label="null|null"];
+}
+--
+
+== ConcurrentHashMap: Java 8+
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 120 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='5'>ConcurrentHashMap</td>
+			</tr>
+			<tr>
+				<td>sizeCtl: 24</td>
+			</tr>
+			<tr>
+				<td>cellsBusy: 0</td>
+			</tr>
+			<tr>
+				<td>transferIndex: 0</td>
+			</tr>
+			<tr>
+				<td>baseCount: 5</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0' cellpadding='9'>
+			<tr>
+				<td port="f0"></td>
+				<td port="f1"></td>
+				<td port="f2"></td>
+				<td port="f3"></td>
+				<td port="f4"></td>
+				<td port="f5"></td>
+				<td port="f6"></td>
+				<td port="f7"></td>
+				<td port="f8"></td>
+				<td port="f9"></td>
+				<td port="f10"></td>
+				<td port="f11"></td>
+				<td port="f12"></td>
+				<td port="f13"></td>
+				<td port="f14"></td>
+				<td port="f15"></td>
+				<td port="f16"></td>
+				<td port="f17"></td>
+				<td port="f18"></td>
+				<td port="f19"></td>
+				<td port="f20"></td>
+				<td port="f21"></td>
+				<td port="f22"></td>
+				<td port="f23"></td>
+				<td port="f24"></td>
+				<td port="f25"></td>
+				<td port="f26"></td>
+				<td port="f27"></td>
+				<td port="f28"></td>
+				<td port="f29"></td>
+				<td port="f30"></td>
+				<td port="f31"></td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>val: 1</td>
+			</tr>
+			<tr>
+				<td>hash: 110183</td>
+			</tr>
+			<tr>
+				<td>key: one</td>
+			</tr>
+		</table>
+	>];
+	n2:f7 -> n3[label="7",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>val: 2</td>
+			</tr>
+			<tr>
+				<td>hash: 115277</td>
+			</tr>
+			<tr>
+				<td>key: two</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>val: 3</td>
+			</tr>
+			<tr>
+				<td>hash: 110338829</td>
+			</tr>
+			<tr>
+				<td>key: three</td>
+			</tr>
+		</table>
+	>];
+	n4 -> n5[label="next",fontsize=12];
+	n2:f13 -> n4[label="13",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>val: 4</td>
+			</tr>
+			<tr>
+				<td>hash: 3149078</td>
+			</tr>
+			<tr>
+				<td>key: four</td>
+			</tr>
+		</table>
+	>];
+	n2:f22 -> n6[label="22",fontsize=12];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='4'>Node</td>
+			</tr>
+			<tr>
+				<td>val: 5</td>
+			</tr>
+			<tr>
+				<td>hash: 3143325</td>
+			</tr>
+			<tr>
+				<td>key: five</td>
+			</tr>
+		</table>
+	>];
+	n2:f29 -> n7[label="29",fontsize=12];
+	n1 -> n2[label="table",fontsize=12];
+}
+--
+
+== Interim Conclusions
+
+* Significant upgrade of HashMap and ConcurrentHashMap in Java 8.
+* In Java 9 there are immutable hashmaps with open addressing.
+* Don't forget about `LinkedHashMap`:
+** two modes of operation
+** `protected boolean removeEldestEntry(...)`
+
+== Our Plan
+
+* [line-through]#Strings and Primitive Wrappers#
+* [line-through]#Queues#
+* [line-through]#`Map` and `ConcurrentMap`#
+* *`NavigableMap` and `ConcurrentNavigableMap`*
+
+== TreeMap: red-black tree
+
+[source,java]
+--
+LJV ljv = new LJV()
+    .setTreatAsPrimitive(Integer.class)
+    .setTreatAsPrimitive(String.class)
+    .setIgnoreNullValuedFields(true)
+    .addIgnoreField("color")
+    .addObjectAttributesProvider(Main::redBlack); 
+    
+    //color ? black : red
+
+Map<String, Integer> map = new TreeMap<>();
+map.put("one", 1);        map.put("two", 2);
+map.put("three", 3);      map.put("four", 4);
+map.put("five", 3);       map.put("six", 4);
+visualize(ljv, map);
+--
+
+== TreeMap: red-black tree
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 120 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 6</td>
+			</tr>
+			<tr>
+				<td>modCount: 6</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: three</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: four</td>
+			</tr>
+			<tr>
+				<td>value: 4</td>
+			</tr>
+		</table>
+	>,color=red];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: five</td>
+			</tr>
+			<tr>
+				<td>value: 3</td>
+			</tr>
+		</table>
+	>,color=black];
+	n4 -> n3[label="parent",fontsize=12];
+	n3 -> n4[label="left",fontsize=12];
+	n3 -> n2[label="parent",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: one</td>
+			</tr>
+			<tr>
+				<td>value: 1</td>
+			</tr>
+		</table>
+	>,color=black];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: six</td>
+			</tr>
+			<tr>
+				<td>value: 4</td>
+			</tr>
+		</table>
+	>,color=red];
+	n6 -> n5[label="parent",fontsize=12];
+	n5 -> n6[label="right",fontsize=12];
+	n5 -> n3[label="parent",fontsize=12];
+	n3 -> n5[label="right",fontsize=12];
+	n2 -> n3[label="left",fontsize=12];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: two</td>
+			</tr>
+			<tr>
+				<td>value: 2</td>
+			</tr>
+		</table>
+	>,color=black];
+	n7 -> n2[label="parent",fontsize=12];
+	n2 -> n7[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+--
+
+== Red-black tree: What's the trick?
+
+
+* Red-black tree invariants:
+
+** The root is black.
+
+** the "`null` leaves" at the ends of branches are considered black.
+
+** Both children of every red node are black.
+    
+** Every simple path from a parent node to a descendant leaf node has the same number of black nodes.
+
+* Consequence:
+
+** The path from the root to the farthest leaf (BRBRBR...) is at most twice as long as to the nearest leaf (BBB...).
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 1</td>
+			</tr>
+			<tr>
+				<td>modCount: 1</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=black,style=filled,fillcolor=yellow];
+	n1 -> n2[label="root",fontsize=12];
+}
+--
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 2</td>
+			</tr>
+			<tr>
+				<td>modCount: 2</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,color=red,style=filled,fillcolor=yellow];
+	n3 -> n2[label="parent",fontsize=12];
+	n2 -> n3[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+
+--
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 3</td>
+			</tr>
+			<tr>
+				<td>modCount: 3</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=red];
+	n3 -> n2[label="parent",fontsize=12];
+	n2 -> n3[label="left",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>,color=red,style=filled,fillcolor=yellow];
+	n4 -> n2[label="parent",fontsize=12];
+	n2 -> n4[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+
+--
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 4</td>
+			</tr>
+			<tr>
+				<td>modCount: 4</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3 -> n2[label="parent",fontsize=12];
+	n2 -> n3[label="left",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>,color=black];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>,color=red,style=filled,fillcolor=yellow];
+	n5 -> n4[label="parent",fontsize=12];
+	n4 -> n5[label="right",fontsize=12];
+	n4 -> n2[label="parent",fontsize=12];
+	n2 -> n4[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+--
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 5</td>
+			</tr>
+			<tr>
+				<td>modCount: 5</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3 -> n2[label="parent",fontsize=12];
+	n2 -> n3[label="left",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>,color=black];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>,color=red];
+	n5 -> n4[label="parent",fontsize=12];
+	n4 -> n5[label="left",fontsize=12];
+	n4 -> n2[label="parent",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>,color=red,style=filled,fillcolor=yellow];
+	n6 -> n4[label="parent",fontsize=12];
+	n4 -> n6[label="right",fontsize=12];
+	n2 -> n4[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+--
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 6</td>
+			</tr>
+			<tr>
+				<td>modCount: 6</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3 -> n2[label="parent",fontsize=12];
+	n2 -> n3[label="left",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>,color=red];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>,color=black];
+	n5 -> n4[label="parent",fontsize=12];
+	n4 -> n5[label="left",fontsize=12];
+	n4 -> n2[label="parent",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>,color=black];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: F</td>
+			</tr>
+		</table>
+	>,color=red,style=filled,fillcolor=yellow];
+	n7 -> n6[label="parent",fontsize=12];
+	n6 -> n7[label="right",fontsize=12];
+	n6 -> n4[label="parent",fontsize=12];
+	n4 -> n6[label="right",fontsize=12];
+	n2 -> n4[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+--
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 7</td>
+			</tr>
+			<tr>
+				<td>modCount: 7</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3 -> n2[label="parent",fontsize=12];
+	n2 -> n3[label="left",fontsize=12];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>,color=red];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>,color=black];
+	n5 -> n4[label="parent",fontsize=12];
+	n4 -> n5[label="left",fontsize=12];
+	n4 -> n2[label="parent",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: F</td>
+			</tr>
+		</table>
+	>,color=black];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>,color=red];
+	n7 -> n6[label="parent",fontsize=12];
+	n6 -> n7[label="left",fontsize=12];
+	n6 -> n4[label="parent",fontsize=12];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: G</td>
+			</tr>
+		</table>
+	>,color=red,style=filled,fillcolor=yellow];
+	n8 -> n6[label="parent",fontsize=12];
+	n6 -> n8[label="right",fontsize=12];
+	n4 -> n6[label="right",fontsize=12];
+	n2 -> n4[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+--
+
+== TreeMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="TB";
+	node[shape=plaintext];
+	graph [ dpi = 130 ];
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='3'>TreeMap</td>
+			</tr>
+			<tr>
+				<td>size: 8</td>
+			</tr>
+			<tr>
+				<td>modCount: 8</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>,color=black];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,color=red];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,color=black];
+	n4 -> n3[label="parent",fontsize=12];
+	n3 -> n4[label="left",fontsize=12];
+	n3 -> n2[label="parent",fontsize=12];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>,color=black];
+	n5 -> n3[label="parent",fontsize=12];
+	n3 -> n5[label="right",fontsize=12];
+	n2 -> n3[label="left",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: F</td>
+			</tr>
+		</table>
+	>,color=red];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>,color=black];
+	n7 -> n6[label="parent",fontsize=12];
+	n6 -> n7[label="left",fontsize=12];
+	n6 -> n2[label="parent",fontsize=12];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: G</td>
+			</tr>
+		</table>
+	>,color=black];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Entry</td>
+			</tr>
+			<tr>
+				<td>key: H</td>
+			</tr>
+		</table>
+	>,color=red,style=filled,fillcolor=yellow];
+	n9 -> n8[label="parent",fontsize=12];
+	n8 -> n9[label="right",fontsize=12];
+	n8 -> n6[label="parent",fontsize=12];
+	n6 -> n8[label="right",fontsize=12];
+	n2 -> n6[label="right",fontsize=12];
+	n1 -> n2[label="root",fontsize=12];
+}
+--
+
+== ConcurrentNavigableMap: the same thing, but thread-safe?
+
+* `ConcurrentSkipListMap`
+* In the comments to the source code can be found:
+** two scientific papers
+** book
+** three PhD theses
+
+== ConcurrentSkipListMap: the idea
+[graphviz]
+--
+digraph G {
+    rankdir = LR;
+    node[shape=box,label=""];
+    I1->I2->I3->IF[label=right];
+    II1->II2->II3->II4->II5->II6->IIF[label=right];
+    N00->N01->N02->N03->N04->N05->N06->N07->N08->N09->N10->N11->NF[label=next];
+    I1->II1->N00[label="                   down"];
+    II2->N03[label="                   down"];
+    I2->II3->N04[label="                   down"];
+    II4->N06[label="                   down"];
+    I3->II5->N09[label="                   down"];
+    II6->N11[label="                   down"];
+    {rank=same;I1;II1;N00}
+    {rank=same;II2;N03}
+    {rank=same;I2;II3;N04}
+    {rank=same;II4;N06}
+    {rank=same;I3;II5;N09}
+    {rank=same;II6;N11}
+    IF[shape=oval,label="null"];
+    IIF[shape=oval,label="null"];
+    NF[shape=oval,label="null"];
+    N01[label="A"]; N02[label="B"]; N03[label="C"];
+    N04[label="D"]; N05[label="E"]; N06[label="F"];
+    N07[label="G"]; N08[label="H"]; N09[label="I"];
+    N10[label="J"]; N11[label="K"]; 
+}
+--
+
+
+
+== ConcurrentSkipListMap
+
+//A
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 1</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n3 -> n4[label="next",fontsize=12];
+	n2 -> n3[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+
+--
+
+== ConcurrentSkipListMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 2</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n4 -> n5[label="next",fontsize=12];
+	n3 -> n4[label="next",fontsize=12];
+	n2 -> n3[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+
+--
+
+== ConcurrentSkipListMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 3</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n4 -> n5[label="node",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="right",fontsize=12];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>];
+	n8 -> n5[label="next",fontsize=12];
+	n7 -> n8[label="next",fontsize=12];
+	n6 -> n7[label="next",fontsize=12];
+	n3 -> n6[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n3[label="down",fontsize=12,constraint=false];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n9 -> n4[label="down",fontsize=12,constraint=false];
+	n9 -> n5[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n9[label="right",fontsize=12];
+	n2 -> n6[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+
+--
+
+== ConcurrentSkipListMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 4</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n5 -> n6[label="node",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="right",fontsize=12];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>];
+	n7 -> n6[label="next",fontsize=12];
+	n4 -> n7[label="node",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="right",fontsize=12];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>];
+	n10 -> n7[label="next",fontsize=12];
+	n9 -> n10[label="next",fontsize=12];
+	n8 -> n9[label="next",fontsize=12];
+	n3 -> n8[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n3[label="down",fontsize=12,constraint=false];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n11 -> n4[label="down",fontsize=12,constraint=false];
+	n11 -> n7[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n11[label="right",fontsize=12];
+	n2 -> n8[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+
+--
+
+== ConcurrentSkipListMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 5</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n6 -> n7[label="node",fontsize=12,constraint=false,color=green];
+	n5 -> n6[label="right",fontsize=12];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>];
+	n8 -> n7[label="next",fontsize=12];
+	n5 -> n8[label="node",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="right",fontsize=12];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>];
+	n9 -> n8[label="next",fontsize=12];
+	n4 -> n9[label="node",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="right",fontsize=12];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>];
+	n12[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>];
+	n12 -> n9[label="next",fontsize=12];
+	n11 -> n12[label="next",fontsize=12];
+	n10 -> n11[label="next",fontsize=12];
+	n3 -> n10[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n3[label="down",fontsize=12,constraint=false];
+	n13[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n13 -> n4[label="down",fontsize=12,constraint=false];
+	n13 -> n9[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n13[label="right",fontsize=12];
+	n2 -> n10[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+--
+
+== ConcurrentSkipListMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 6</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: F</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n7 -> n8[label="node",fontsize=12,constraint=false,color=green];
+	n6 -> n7[label="right",fontsize=12];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>];
+	n9 -> n8[label="next",fontsize=12];
+	n6 -> n9[label="node",fontsize=12,constraint=false,color=green];
+	n5 -> n6[label="right",fontsize=12];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>];
+	n10 -> n9[label="next",fontsize=12];
+	n5 -> n10[label="node",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="right",fontsize=12];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>];
+	n11 -> n10[label="next",fontsize=12];
+	n4 -> n11[label="node",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="right",fontsize=12];
+	n12[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>];
+	n13[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>];
+	n14[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>];
+	n14 -> n11[label="next",fontsize=12];
+	n13 -> n14[label="next",fontsize=12];
+	n12 -> n13[label="next",fontsize=12];
+	n3 -> n12[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n3[label="down",fontsize=12,constraint=false];
+	n15[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n15 -> n4[label="down",fontsize=12,constraint=false];
+	n15 -> n11[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n15[label="right",fontsize=12];
+	n2 -> n12[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+
+--
+
+== ConcurrentSkipListMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 7</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: G</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n8 -> n9[label="node",fontsize=12,constraint=false,color=green];
+	n7 -> n8[label="right",fontsize=12];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: F</td>
+			</tr>
+		</table>
+	>];
+	n10 -> n9[label="next",fontsize=12];
+	n7 -> n10[label="node",fontsize=12,constraint=false,color=green];
+	n6 -> n7[label="right",fontsize=12];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>];
+	n11 -> n10[label="next",fontsize=12];
+	n6 -> n11[label="node",fontsize=12,constraint=false,color=green];
+	n5 -> n6[label="right",fontsize=12];
+	n12[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>];
+	n12 -> n11[label="next",fontsize=12];
+	n5 -> n12[label="node",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="right",fontsize=12];
+	n13[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>];
+	n13 -> n12[label="next",fontsize=12];
+	n4 -> n13[label="node",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="right",fontsize=12];
+	n14[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>];
+	n15[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>];
+	n16[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>];
+	n16 -> n13[label="next",fontsize=12];
+	n15 -> n16[label="next",fontsize=12];
+	n14 -> n15[label="next",fontsize=12];
+	n3 -> n14[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n3[label="down",fontsize=12,constraint=false];
+	n17[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n17 -> n4[label="down",fontsize=12,constraint=false];
+	n18[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n18 -> n8[label="down",fontsize=12,constraint=false];
+	n18 -> n9[label="node",fontsize=12,constraint=false,color=green];
+	n17 -> n18[label="right",fontsize=12];
+	n17 -> n13[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n17[label="right",fontsize=12];
+	n2 -> n14[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+
+--
+
+== ConcurrentSkipListMap
+
+[graphviz]
+--
+digraph Java {
+	rankdir="LR";
+	node[shape=plaintext]
+	n1[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>ConcurrentSkipListMap</td>
+			</tr>
+			<tr>
+				<td>adder: 8</td>
+			</tr>
+		</table>
+	>];
+	n2[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n3[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n4[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n5[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n6[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n7[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n8[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n9[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: G</td>
+			</tr>
+		</table>
+	>];
+	n10[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: H</td>
+			</tr>
+		</table>
+	>,style=filled,fillcolor=yellow];
+	n9 -> n10[label="next",fontsize=12];
+	n8 -> n9[label="node",fontsize=12,constraint=false,color=green];
+	n7 -> n8[label="right",fontsize=12];
+	n11[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: F</td>
+			</tr>
+		</table>
+	>];
+	n11 -> n9[label="next",fontsize=12];
+	n7 -> n11[label="node",fontsize=12,constraint=false,color=green];
+	n6 -> n7[label="right",fontsize=12];
+	n12[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: E</td>
+			</tr>
+		</table>
+	>];
+	n12 -> n11[label="next",fontsize=12];
+	n6 -> n12[label="node",fontsize=12,constraint=false,color=green];
+	n5 -> n6[label="right",fontsize=12];
+	n13[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: D</td>
+			</tr>
+		</table>
+	>];
+	n13 -> n12[label="next",fontsize=12];
+	n5 -> n13[label="node",fontsize=12,constraint=false,color=green];
+	n4 -> n5[label="right",fontsize=12];
+	n14[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: C</td>
+			</tr>
+		</table>
+	>];
+	n14 -> n13[label="next",fontsize=12];
+	n4 -> n14[label="node",fontsize=12,constraint=false,color=green];
+	n3 -> n4[label="right",fontsize=12];
+	n15[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Node</td>
+			</tr>
+		</table>
+	>];
+	n16[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: A</td>
+			</tr>
+		</table>
+	>];
+	n17[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td rowspan='2'>Node</td>
+			</tr>
+			<tr>
+				<td>key: B</td>
+			</tr>
+		</table>
+	>];
+	n17 -> n14[label="next",fontsize=12];
+	n16 -> n17[label="next",fontsize=12];
+	n15 -> n16[label="next",fontsize=12];
+	n3 -> n15[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n3[label="down",fontsize=12,constraint=false];
+	n18[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n18 -> n4[label="down",fontsize=12,constraint=false];
+	n19[label=<
+		<table border='0' cellborder='1' cellspacing='0'>
+			<tr>
+				<td>Index</td>
+			</tr>
+		</table>
+	>];
+	n19 -> n8[label="down",fontsize=12,constraint=false];
+	n19 -> n9[label="node",fontsize=12,constraint=false,color=green];
+	n18 -> n19[label="right",fontsize=12];
+	n18 -> n14[label="node",fontsize=12,constraint=false,color=green];
+	n2 -> n18[label="right",fontsize=12];
+	n2 -> n15[label="node",fontsize=12,constraint=false,color=green];
+	n1 -> n2[label="head",fontsize=12];
+}
+
+--
+
+== Interim Conclusions
+
+* Advanced algorithms work wonders.
+* We have reached a point where simple visualization is not enough.
+
+== That's all!
+
+* Check out the project at https://github.com/openjdk/jol
+* Experiment
+* Send your ideas
+* Source code of examples and presentations:  https://github.com/inponomarev/ljvtalk

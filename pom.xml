@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.synthesized</groupId>
+    <artifactId>ljv2024</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <name>ljv jol talk</name>
+    <description>Talk about Lightweight Java Visualizer in JOL</description>
+    <packaging>pom</packaging>
+
+    <modules>
+        <module>demo</module>
+        <module>slides</module>
+    </modules>
+
+    <organization>
+        <name>Synthesized</name>
+        <url>https://synthesized.io</url>
+    </organization>
+
+    <developers>
+        <developer>
+            <name>Ivan Ponomarev</name>
+            <email>ivan@synthesized.io</email>
+        </developer>
+    </developers>
+</project>
