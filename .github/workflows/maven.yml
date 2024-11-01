@@ -24,7 +24,7 @@ jobs:
       run: sudo apt-get install -y graphviz
 
     - name: Build with Maven
-      run: mvn package --file pom.xml
+      run: mvn package -pl slides --file pom.xml
 
     - name: Deploy to GitHub Pages
       if: success() && github.ref == 'refs/heads/master'
