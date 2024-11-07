@@ -7,7 +7,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 
 public class Util {
-    public static void browse(LJV ljv, Object obj) {
+    public static void openBrowser(LJV ljv, Object obj) {
         try {
             var dot = URLEncoder.encode(ljv.drawGraph(obj), "UTF8")
                     .replaceAll("\\+", "%20");

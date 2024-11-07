@@ -34,7 +34,7 @@ include::_doc_general_attributes.adoc[]
 |
 Ivan Ponomarev
 
-* Staff Software Engineer @ Synthesized
+* Team Lead @ Synthesized
 * Lecturer @ Northeastern University London
 |===
 
@@ -44,6 +44,9 @@ Ivan Ponomarev
 * Don't feel like drawing on the board
 * Want to make slides as code (https://ponomarev.uk/blog/presentation.html)
 * *Is it possible for the slides to draw themselves?*
+
+image::presentationascode.svg[{image-20-width}]
+
 
 == GraphViz (Graph Visualization Software)
 
@@ -115,7 +118,7 @@ module java.base does not "opens java.lang" to unnamed module
 
 == OpenJDK/JOL
 
-* _JOL (Java Object Layout) is the tiny toolbox to analyze object layout schemes in JVMs. These tools are using Unsafe, JVMTI, and Serviceability Agent (SA) heavily to decoder the actual object layout, footprint, and references. This makes JOL much more accurate than other tools._
+* _JOL (Java Object Layout) is the tiny toolbox to analyze object layout schemes in JVMs. These tools are using Unsafe, JVMTI, and Serviceability Agent (SA) heavily to decode the actual object layout, footprint, and references. This makes JOL much more accurate than other tools._
 * JOL is *very* low-level, it hacks into the structure of Java objects and reveals their structure bitwise in memory.
 * As it's a part of OpenJDK, we can rely on its support in the future.
 
@@ -157,7 +160,13 @@ Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
 
 == What can we learn from JOL?
 
-* https://shipilev.net/jvm/objects-inside-out/
+* Alexey Shipilev: Java Objects Inside Out https://shipilev.net/jvm/objects-inside-out/
+
+* Mark Word/Class Word/Field alignments -- internals of the individual object
+
+* We are focusing on data structures layouts
+
+image::shipilev.svg[{image-20-width}]
 
 == 2024: LJV is now part of JOL
 
@@ -396,6 +405,10 @@ digraph Java {
 * Queues
 * `Map` and `ConcurrentMap`
 * `NavigableMap` and `ConcurrentNavigableMap`
+
+_Note: there will be no manually adjusted images +
+in this presentation. All the diagrams are dumped "as is" +
+from JOL output._
 
 == String
 
@@ -824,11 +837,11 @@ digraph Java {
 
 [source,java]
     /*0*/   x,
-    /*1*/   new String(x),  //переиспользуется буфер
+    /*1*/   new String(x),  //the buffer is reused
     /*2*/   new String(x.toCharArray()),
     /*3*/   x + "",
     /*4*/   "" + x,
-    /*5*/   x.concat(""),   //переиспользуется весь x
+    /*5*/   x.concat(""),   //returns x
     /*6*/   "".concat(x)
 
 == Creation of Strings (Java 16+)
@@ -939,7 +952,7 @@ digraph Java {
     /*2*/   new String(x.toCharArray()),
     /*3*/   x + "",
     /*4*/   "" + x,
-    /*5*/   x.concat(""),   //переиспользуется весь x
+    /*5*/   x.concat(""),   //returns x
     /*6*/   "".concat(x)
 
 
@@ -1015,7 +1028,8 @@ digraph Java {
 
 * Switch to newer versions of Java, strings are getting better and better!
 
-* When performance analysis suggests, perform string deduplication (but not through `intern()`).
+* In case of performance problems due to memory overhead, do string deduplication +
+(but not through `intern()`).
 
 
 == Further Viewing
@@ -1125,11 +1139,11 @@ digraph Java {
 == Interim Conclusions
 
 * Remember about deduplication of boxed primitives.
-* If performance analysis indicates, use libraries:
+* In case of performance problems due to memory overhead, use libraries:
 ** https://github.com/vigna/fastutil[fastutil] 
 ** https://github.com/eclipse/eclipse-collections[Eclipse collections] primitive collections
 ** ...
-** ...or wait for Valhalla (generic specialization).
+** ...or wait for Project Valhalla (generic specialization).
 
 == Our Plan
 
@@ -1906,7 +1920,7 @@ digraph Java {
 * *`Map` and `ConcurrentMap`*
 * `NavigableMap` and `ConcurrentNavigableMap`
 
-== His Magesty `HashMap`
+== `HashMap`
 
 [source,java]
 --
@@ -1921,7 +1935,7 @@ map.put("three", 3); map.put("four", 4);
 visualize(ljv, map);
 --
 
-== His Magesty `HashMap`
+== `HashMap`
 
 [graphviz]
 --
@@ -5258,4 +5272,7 @@ digraph Java {
 * Check out the project at https://github.com/openjdk/jol
 * Experiment
 * Send your ideas
-* Source code of examples and presentations:  https://github.com/inponomarev/ljvtalk
+* Source code of examples and presentation slides: +
+https://github.com/inponomarev/ljv2024
+
+image::presentationascode.svg[{image-20-width}]

@@ -4,14 +4,16 @@ import org.openjdk.jol.ljv.LJV;
 
 import java.util.Map;
 
-import static io.synthesized.Util.browse;
+import static io.synthesized.Util.openBrowser;
 
 public final class Demo {
     private Demo() {
     }
 
     public static void main(String[] args) {
-        browse(new LJV(), immutableMap());
+        LJV ljv = new LJV();
+        Object object = immutableMap();
+        openBrowser(ljv, object);
     }
 
     private static Object immutableMap() {

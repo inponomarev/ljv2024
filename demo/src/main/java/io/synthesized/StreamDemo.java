@@ -5,7 +5,7 @@ import org.openjdk.jol.ljv.LJV;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static io.synthesized.Util.browse;
+import static io.synthesized.Util.openBrowser;
 
 public class StreamDemo {
 
@@ -15,11 +15,11 @@ public class StreamDemo {
                 .setIgnoreNullValuedFields(true)
                 .addFieldAttribute("sourceSpliterator", "constraint=false");
 
-        Stream<Integer> o =
+        Stream<Integer> object =
                 List.of(1, 2, 3)
                         .stream()
                         .map(x -> x * x)
                         .filter(x -> x % 2 == 0);
-        browse(ljv, o);
+        openBrowser(ljv, object);
     }
 }
